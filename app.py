@@ -4,18 +4,47 @@ import joblib
 import requests
 import statistics
 import os
-
 from dotenv import load_dotenv
-load_dotenv()
 
+load_dotenv()
 
 app = Flask(__name__)
 
 # =========================
-# LOAD MODEL & DATA
+# ENVIRONMENT VARIABLES
 # =========================
 
-model = joblib.load("karnataka_yield_model.pkl")
+API_KEY = os.getenv("DATA_GOV_API_KEY")
+
+if not API_KEY:
+    raise ValueError("DATA_GOV_API_KEY environment variable not set")
+
+RESOURCE_ID = "9ef84268-d588-465a-a308-a864a43d0070"
+
+# =========================
+# MODEL AUTO DOWNLOAD
+# =========================
+
+MODEL_PATH = "karnataka_yield_model.pkl"
+MODEL_URL = "https://drive.google.com/uc?export=download&id=1f6ZblcYZTUogSh1nwDP4M31ynp7Towc6"
+
+if not os.path.exists(MODEL_PATH):
+    print("Downloading model file from Google Drive...")
+    try:
+        r = requests.get(MODEL_URL, timeout=60)
+        r.raise_for_status()
+        with open(MODEL_PATH, "wb") as f:
+            f.write(r.content)
+        print("Model downloaded successfully.")
+    except Exception as e:
+        raise RuntimeError(f"Failed to download model file: {e}")
+
+model = joblib.load(MODEL_PATH)
+
+# =========================
+# LOAD DATA
+# =========================
+
 crop_master = pd.read_csv("karnataka_crop_master_dataset_expanded.csv")
 
 district_rainfall = {
@@ -30,13 +59,6 @@ district_rainfall = {
     "Bengaluru Rural": 885, "Ballari": 636,
     "Gulbarga": 777
 }
-
-API_KEY = os.getenv("DATA_GOV_API_KEY")
-
-if not API_KEY:
-    raise ValueError("DATA_GOV_API_KEY environment variable not set")
-
-RESOURCE_ID = "9ef84268-d588-465a-a308-a864a43d0070"
 
 # =========================
 # MANDI PRICE FUNCTIONS
@@ -53,7 +75,7 @@ def fetch_karnataka_prices():
     }
 
     try:
-        response = requests.get(url, params=params, timeout=5)
+        response = requests.get(url, params=params, timeout=10)
         data = response.json()
         return data.get("records", [])
     except Exception as e:
@@ -76,13 +98,9 @@ def build_price_dictionary(records):
         except:
             continue
 
-        # -----------------------------
-        # OUTLIER FILTERING
-        # -----------------------------
+        # Outlier filtering
         if price < 100:
             continue
-
-        # Remove extreme unrealistic values
         if price > 30000:
             continue
 
@@ -93,9 +111,7 @@ def build_price_dictionary(records):
 
         price_dict[commodity_clean].append(price)
 
-    # -----------------------------
-    # MEDIAN PRICE CALCULATION
-    # -----------------------------
+    # Median price
     for commodity in price_dict:
         price_dict[commodity] = statistics.median(price_dict[commodity])
 
@@ -103,12 +119,11 @@ def build_price_dictionary(records):
 
 
 def get_price_for_crop(crop_name, price_dict):
-
     crop_name = crop_name.lower()
 
     for commodity in price_dict:
 
-        # Avoid mixing dry and fresh chilli
+        # Avoid mixing dry & green chilli
         if "chilli" in crop_name:
             if "dry" in commodity and "green" in crop_name:
                 continue
@@ -117,6 +132,15 @@ def get_price_for_crop(crop_name, price_dict):
             return price_dict[commodity]
 
     return 0
+
+
+# =========================
+# HEALTH CHECK ROUTE
+# =========================
+
+@app.route("/", methods=["GET"])
+def health():
+    return jsonify({"status": "Agri Finance Backend Running"})
 
 
 # =========================
@@ -138,7 +162,6 @@ def predict():
 
     district_mean = district_rainfall.get(district, 800)
 
-    # Fetch mandi prices once
     mandi_records = fetch_karnataka_prices()
     price_dict = build_price_dictionary(mandi_records)
 
@@ -146,10 +169,7 @@ def predict():
 
     for _, crop in crop_master.iterrows():
 
-        # ------------------------
-        # RULE FILTERING
-        # ------------------------
-
+        # Rule filtering
         if season.lower() == "kharif" and crop["season_kharif"] != 1:
             continue
         if season.lower() == "rabi" and crop["season_rabi"] != 1:
@@ -161,10 +181,6 @@ def predict():
             continue
         if soil.lower() == "alluvial" and crop["soil_alluvial"] != 1:
             continue
-
-        # ------------------------
-        # PREPARE ML INPUT
-        # ------------------------
 
         input_data = pd.DataFrame([{
             "district_mean_rainfall": district_mean,
@@ -182,18 +198,10 @@ def predict():
 
         predicted_yield = model.predict(input_data)[0]
 
-        # ------------------------
-        # MARKET PRICE
-        # ------------------------
-
         price = get_price_for_crop(crop["crop_name"], price_dict)
 
         if price == 0:
             continue
-
-        # ------------------------
-        # FINANCIAL CALCULATION
-        # ------------------------
 
         investment = crop["total_cost_per_acre"] * land_area
         revenue = predicted_yield * land_area * price
@@ -201,7 +209,6 @@ def predict():
 
         roi = (expected_profit / investment) * 100 if investment > 0 else 0
 
-        # Risk classification (more realistic)
         if roi > 200:
             risk = "High Reward (High Market Volatility)"
         elif roi > 80:
@@ -225,6 +232,10 @@ def predict():
         "recommendations": recommendations[:3]
     })
 
+
+# =========================
+# ENTRY POINT
+# =========================
 
 if __name__ == "__main__":
     app.run()
