@@ -26,18 +26,18 @@ RESOURCE_ID = "9ef84268-d588-465a-a308-a864a43d0070"
 # =========================
 
 MODEL_PATH = "karnataka_yield_model.pkl"
-MODEL_URL = "https://drive.google.com/uc?export=download&id=1f6ZblcYZTUogSh1nwDP4M31ynp7Towc6"
+FILE_ID = "1f6ZblcYZTUogSh1nwDP4M31ynp7Towc6"
+
+def download_model():
+    print("Downloading model from Google Drive using gdown...")
+    url = f"https://drive.google.com/uc?id={FILE_ID}"
+    gdown.download(url, MODEL_PATH, quiet=False)
+    print("Download complete.")
 
 if not os.path.exists(MODEL_PATH):
-    print("Downloading model file from Google Drive...")
-    try:
-        r = requests.get(MODEL_URL, timeout=60)
-        r.raise_for_status()
-        with open(MODEL_PATH, "wb") as f:
-            f.write(r.content)
-        print("Model downloaded successfully.")
-    except Exception as e:
-        raise RuntimeError(f"Failed to download model file: {e}")
+    download_model()
+
+print("Model file size:", os.path.getsize(MODEL_PATH))
 
 model = joblib.load(MODEL_PATH)
 
