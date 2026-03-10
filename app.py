@@ -66,28 +66,43 @@ district_rainfall = {
 # =========================
 
 def fetch_karnataka_prices():
+
     url = f"https://api.data.gov.in/resource/{RESOURCE_ID}"
 
     params = {
         "api-key": API_KEY,
         "format": "json",
-        "filters[state]": "Karnataka",
-        "limit": 300
+        "limit": 1000
     }
 
     try:
         response = requests.get(url, params=params, timeout=10)
         data = response.json()
-        return data.get("records", [])
+
+        records = data.get("records", [])
+
+        # Filter Karnataka locally
+        karnataka_records = [
+            r for r in records
+            if r.get("state", "").strip().lower() == "karnataka"
+        ]
+
+        print("Total API records:", len(records))
+        print("Karnataka records:", len(karnataka_records))
+
+        return karnataka_records
+
     except Exception as e:
         print("Mandi API fetch error:", e)
         return []
 
 
 def build_price_dictionary(records):
+
     price_dict = {}
 
     for record in records:
+
         commodity = record.get("commodity")
         price = record.get("modal_price")
 
@@ -102,6 +117,7 @@ def build_price_dictionary(records):
         # Outlier filtering
         if price < 100:
             continue
+
         if price > 30000:
             continue
 
@@ -120,6 +136,7 @@ def build_price_dictionary(records):
 
 
 def get_price_for_crop(crop_name, price_dict):
+
     crop_name = crop_name.lower()
 
     for commodity in price_dict:
@@ -164,6 +181,10 @@ def predict():
     district_mean = district_rainfall.get(district, 800)
 
     mandi_records = fetch_karnataka_prices()
+
+    if not mandi_records:
+        print("Warning: No Karnataka mandi records returned from API")
+
     price_dict = build_price_dictionary(mandi_records)
 
     recommendations = []
@@ -173,13 +194,16 @@ def predict():
         # Rule filtering
         if season.lower() == "kharif" and crop["season_kharif"] != 1:
             continue
+
         if season.lower() == "rabi" and crop["season_rabi"] != 1:
             continue
 
         if soil.lower() == "black" and crop["soil_black"] != 1:
             continue
+
         if soil.lower() == "red" and crop["soil_red"] != 1:
             continue
+
         if soil.lower() == "alluvial" and crop["soil_alluvial"] != 1:
             continue
 
@@ -187,14 +211,14 @@ def predict():
             "district_mean_rainfall": district_mean,
             "rainfall_mm": rainfall,
             "crop_id": crop["crop_id"],
-            "soil_black": 1 if soil.lower()=="black" else 0,
-            "soil_red": 1 if soil.lower()=="red" else 0,
-            "soil_alluvial": 1 if soil.lower()=="alluvial" else 0,
-            "irrigation_rainfed": 1 if irrigation.lower()=="rainfed" else 0,
-            "irrigation_borewell": 1 if irrigation.lower()=="borewell" else 0,
-            "irrigation_canal": 1 if irrigation.lower()=="canal" else 0,
-            "season_kharif": 1 if season.lower()=="kharif" else 0,
-            "season_rabi": 1 if season.lower()=="rabi" else 0
+            "soil_black": 1 if soil.lower() == "black" else 0,
+            "soil_red": 1 if soil.lower() == "red" else 0,
+            "soil_alluvial": 1 if soil.lower() == "alluvial" else 0,
+            "irrigation_rainfed": 1 if irrigation.lower() == "rainfed" else 0,
+            "irrigation_borewell": 1 if irrigation.lower() == "borewell" else 0,
+            "irrigation_canal": 1 if irrigation.lower() == "canal" else 0,
+            "season_kharif": 1 if season.lower() == "kharif" else 0,
+            "season_rabi": 1 if season.lower() == "rabi" else 0
         }])
 
         predicted_yield = model.predict(input_data)[0]
@@ -205,7 +229,9 @@ def predict():
             continue
 
         investment = crop["total_cost_per_acre"] * land_area
+
         revenue = predicted_yield * land_area * price
+
         expected_profit = revenue - investment
 
         roi = (expected_profit / investment) * 100 if investment > 0 else 0
